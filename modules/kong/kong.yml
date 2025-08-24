@@ -1,0 +1,87 @@
+_format_version: '2.1'
+_transform: true
+
+services:
+- name: api
+  url: http://api:4000
+  routes:
+  - name: api-route
+    strip_path: false
+    paths:
+    - /api
+  plugins:
+    - name: cors
+      config:
+        origins:
+        - http://localhost:3000
+        - http://localhost:5000
+        methods:
+        - GET
+        - POST
+        - PUT
+        - DELETE
+        - OPTIONS
+        headers:
+        - Accept
+        - Authorization
+        - Content-Type
+        - x-curity-csrf
+        exposed_headers:
+        - Authorization
+        credentials: true
+        preflight_continue: false
+
+- name: web-app
+  url: http://web-app:3000
+  routes:
+  - name: web-app-route
+    strip_path: false
+    paths:
+    - /
+  plugins:
+    - name: cors
+      config:
+        origins:
+        - http://localhost:3000
+        - http://localhost:5000
+        methods:
+        - GET
+        - POST
+        - OPTIONS
+        headers:
+        - Accept
+        - Authorization
+        - Content-Type
+        exposed_headers:
+        - Authorization
+        credentials: true
+        preflight_continue: false
+
+- name: curity
+  url: http://curity:8443
+  routes:
+  - name: curity-route
+    strip_path: false
+    paths:
+    - /oauth
+    - /authn
+    - /admin
+  plugins:
+    - name: cors
+      config:
+        origins:
+        - http://localhost:3000
+        - http://localhost:5000
+        methods:
+        - GET
+        - POST
+        - OPTIONS
+        headers:
+        - Accept
+        - Authorization
+        - Content-Type
+        - x-curity-csrf
+        exposed_headers:
+        - Authorization
+        credentials: true
+        preflight_continue: false

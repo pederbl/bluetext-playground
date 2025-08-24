@@ -1,0 +1,142 @@
+templates:
+  - id: stack
+    info: "Complete application stack with React web app, Python API, Kong gateway, Curity identity provider, PostgreSQL, Couchbase, and Redpanda"
+    run:
+      - web-app
+      - api
+      - kong
+      - curity
+      - postgres
+      - couchbase
+      - redpanda
+      - config-manager
+
+modules:
+  - id: web-app
+    info: "React web application (blueprint: react-web-app)"
+    params:
+      - id: cmd
+        type: [default, str, ./bin/run]
+    module: polytope/node
+    args:
+      id: web-app
+      image: oven/bun:slim
+      code: { type: host, path: ./modules/web-app }
+      cmd: pt.param cmd
+      env:
+        - { name: PORT, value: pt.value web-app-port }
+        - { name: API_HOST, value: pt.value api-host }
+      restart:
+        policy: always
+      services:
+        - id: web-app
+          ports: [{protocol: http, port: pt.value web-app-port, expose-as: pt.value web-app-port}]
+      mounts:
+        - { path: /root/.cache/, source: { type: volume, scope: project, id: dependency-cache }}
+        - { path: /root/.bun/, source: { type: volume, scope: project, id: bun-cache }}
+        - { path: /app/node_modules/, source: { type: volume, scope: project, id: node-modules }}
+
+  - id: api
+    info: "Python API server (blueprint: python-api)"
+    module: polytope/python
+    args:
+      image: python:3.13-slim
+      code: { type: host, path: ./modules/api }
+      cmd: bin/run
+      services:
+        - id: api
+          ports:
+            - port: 4000
+              protocol: http
+              expose-as: pt.value api-port
+      env:
+        - { name: PORT, value: pt.value api-port }
+        - { name: DATABASE_HOST, value: pt.value postgres-host }
+        - { name: DATABASE_PORT, value: pt.value postgres-port }
+        - { name: DATABASE_NAME, value: pt.value postgres-database }
+        - { name: DATABASE_USER, value: pt.secret postgres-username }
+        - { name: DATABASE_PASSWORD, value: pt.secret postgres-password }
+        - { name: COUCHBASE_HOST, value: pt.value couchbase-host }
+        - { name: COUCHBASE_USERNAME, value: pt.secret couchbase-username }
+        - { name: COUCHBASE_PASSWORD, value: pt.secret couchbase-password }
+        - { name: REDPANDA_HOST, value: pt.value redpanda-host }
+        - { name: REDPANDA_PORT, value: pt.value redpanda-port }
+
+  - id: kong
+    info: "Kong API Gateway (blueprint: kong-api-gateway)"
+    module: polytope/kong!simple
+    args:
+      image: gcr.io/arched-inkwell-420116/kong-oauth-proxy:latest
+      config-file: { type: host, path: ./modules/kong/kong.yml }
+      autoreload: true
+      env:
+        - { name: KONG_ADMIN_LISTEN, value: "0.0.0.0:8001" }
+        - { name: KONG_PROXY_LISTEN, value: "0.0.0.0:8000" }
+      services:
+        - { id: kong, ports: [{ port: 8000, protocol: http, expose-as: pt.value kong-port }] }
+        - { id: kong-admin, ports: [{ port: 8001, protocol: http, expose-as: pt.value kong-admin-port }] }
+
+  - id: curity
+    info: "Curity Identity Server (blueprint: curity-identity-provider)"
+    module: polytope/curity
+    args:
+      image: curity.azurecr.io/curity/idsvr:10.4.0
+      config-file: { type: host, path: ./modules/curity/config.xml }
+      restart: { policy: always }
+      password: password
+      env:
+        - { name: ADMIN, value: true }
+        - { name: CURITY_BASE_URL, value: pt.value curity-base-url }
+        - { name: WEB_APP_URL, value: pt.value web-app-url }
+        - { name: CURITY_AGENT_BASE_URL, value: pt.value curity-agent-base-url}
+      mounts:
+        - { path: /opt/idsvr/usr/bin/post-commit-cli-scripts, source: { type: host, path: ./modules/curity/post-commit-cli-scripts }}
+        - { path: /opt/idsvr/etc/init/curity-users.xml, source: { type: host, path: ./modules/curity/users.xml }}
+
+  - id: postgres
+    info: "PostgreSQL database server (blueprint: postgres)"
+    module: polytope/postgres
+    args:
+      image: postgres:16.2
+      data-volume: { id: postgres-data, type: volume, scope: project }
+      env:
+        - { name: POSTGRES_HOST_AUTH_METHOD, value: trust }
+        - { name: POSTGRES_DB, value: pt.value postgres-database }
+        - { name: POSTGRES_USER, value: pt.secret postgres-username }
+        - { name: POSTGRES_PASSWORD, value: pt.secret postgres-password }
+      restart: { policy: on-failure }
+      service-id: postgres
+
+  - id: couchbase
+    info: "Couchbase cluster (blueprint: couchbase)"
+    module: polytope/couchbase
+    args:
+      image: couchbase:enterprise-7.6.6
+      data-volume: { id: couchbase-data, type: volume, scope: project }
+
+  - id: redpanda
+    info: "Redpanda server (blueprint: redpanda)"
+    module: polytope/redpanda
+    args:
+      image: docker.redpanda.com/redpandadata/redpanda:latest
+      data-volume: { id: redpanda-data, type: volume, scope: project }
+
+  - id: config-manager
+    info: "Manages Redpanda topics and Couchbase buckets/scopes/collections (blueprint: config-manager)"
+    module: polytope/container
+    args:
+      image: gcr.io/arched-inkwell-420116/config-manager:latest
+      id: config-manager
+      restart: { policy: on-failure, max-restarts: 3 }
+      env:
+        - { name: ENVIRONMENT, value: pt.value environment }
+        - { name: SERVICES, value: pt.value config-manager-services }
+        - { name: COUCHBASE_HOST, value: pt.value couchbase-host }
+        - { name: COUCHBASE_TLS, value: pt.value couchbase-tls }
+        - { name: COUCHBASE_USERNAME, value: pt.secret couchbase-username }
+        - { name: COUCHBASE_PASSWORD, value: pt.secret couchbase-password }
+        - { name: REDPANDA_HOST, value: pt.value redpanda-host }
+        - { name: REDPANDA_PORT, value: pt.value redpanda-port }
+      mounts:
+        - { path: /config-manager/conf, source: { type: host, path: ./modules/config-manager } }
+        - { path: /root/.cache/, source: { type: volume, scope: project, id: dependency-cache } }

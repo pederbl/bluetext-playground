@@ -1,0 +1,76 @@
+defaults:  # Applies to all topics unless overridden
+  partitions: 1
+  replication: 1
+  config:
+    retention.ms: 86400000  # 1 day default
+    cleanup.policy: delete
+
+topics:
+  user-events:
+    defaults:  # Per-topic defaults across all envs
+      partitions: 3
+      config:
+        cleanup.policy: delete
+        retention.ms: 604800000  # 7 days
+    env_settings:
+      staging:
+        partitions: 6
+        replication: 2
+        config:
+          retention.ms: 1209600000  # 14 days
+      prod:
+        partitions: 12
+        replication: 3
+        config:
+          retention.ms: 2592000000  # 30 days
+
+  api-logs:
+    defaults:
+      partitions: 2
+      config:
+        cleanup.policy: delete
+        retention.ms: 259200000  # 3 days
+    env_settings:
+      staging:
+        partitions: 4
+        replication: 2
+        config:
+          retention.ms: 604800000  # 7 days
+      prod:
+        partitions: 8
+        replication: 3
+        config:
+          retention.ms: 1209600000  # 14 days
+
+  notifications:
+    defaults:
+      partitions: 2
+      config:
+        cleanup.policy: delete
+        retention.ms: 172800000  # 2 days
+    env_settings:
+      staging:
+        partitions: 4
+        replication: 2
+      prod:
+        partitions: 6
+        replication: 3
+        config:
+          retention.ms: 604800000  # 7 days
+
+  session-events:
+    defaults:
+      config:
+        cleanup.policy: compact
+        retention.ms: 604800000  # 7 days
+    env_settings:
+      staging:
+        partitions: 2
+        replication: 2
+      prod:
+        partitions: 4
+        replication: 3
+        config:
+          retention.ms: 1209600000  # 14 days
+
+  system-metrics: {}  # No settings; uses global defaults
