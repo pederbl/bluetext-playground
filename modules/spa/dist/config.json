@@ -1,0 +1,6 @@
+{
+    "bffBaseUrl": "http://localhost:8000",
+    "oauthAgentPath": "/apps/token-handler",
+    "oauthUserinfoPath": "/oauth/v2/oauth-userinfo",
+    "apiPath": "/api"
+}

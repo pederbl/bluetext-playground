@@ -1,19 +1,141 @@
 templates:
   - id: stack
-    info: "Complete application stack with React web app, Python API, Kong gateway, Curity identity provider, PostgreSQL, Couchbase, and Redpanda"
+    info: "Full stack with React web app and Python API"
     run:
-      - web-app
-      - api
       - kong
       - curity
       - postgres
-      - couchbase
-      - redpanda
-      - config-manager
+      - api
+      - spa
 
 modules:
+  - id: boilerplate
+    module: polytope/container
+    params:
+      - id: target-path
+        info: Path relative to the repo root where the module's code will be created
+        type: str
+      - id: source-path
+        info: Git repository URL to clone boilerplate code from
+        type: str
+    args:
+      image: alpine:latest
+      cmd:
+        - sh
+        - -c
+        - |
+          set -eu
+          echo "Installing git..."
+          apk add --no-cache git
+          
+          echo "Creating boilerplate code from $SOURCE_PATH at $TARGET_PATH..."
+          
+          # Check target path
+          if [ -d "$TARGET_PATH" ]; then
+            if [ "$(ls -A "$TARGET_PATH")" ]; then
+              echo "ERROR: The target path '$TARGET_PATH' already exists and is not empty. Please choose a different path."
+              exit 1
+            fi
+          else
+            mkdir -p "$TARGET_PATH"
+          fi
+          
+          # Clone repository to temporary location
+          echo "Cloning boilerplate from $SOURCE_PATH..."
+          TEMP_DIR="/tmp/boilerplate-$$"
+          git clone --depth 1 "$SOURCE_PATH" "$TEMP_DIR"
+          
+          # Copy all contents first
+          echo "Copying boilerplate files to $TARGET_PATH..."
+          cp -r "$TEMP_DIR"/* "$TARGET_PATH/" 2>/dev/null || true
+          cp -r "$TEMP_DIR"/.[!.]* "$TARGET_PATH/" 2>/dev/null || true
+          
+          # Remove .git directory and all git-related files
+          echo "Removing .git directory and git-related files..."
+          rm -rf "$TARGET_PATH"/.git
+          rm -f "$TARGET_PATH"/.gitignore
+          rm -f "$TARGET_PATH"/.gitattributes
+          rm -f "$TARGET_PATH"/.gitmodules
+          rm -f "$TARGET_PATH"/.gitkeep
+          
+          # Remove README and LICENSE files from root directory if they exist
+          echo "Removing README and LICENSE files from root directory..."
+          rm -f "$TARGET_PATH"/README*
+          rm -f "$TARGET_PATH"/LICENSE*
+          rm -f "$TARGET_PATH"/readme*
+          rm -f "$TARGET_PATH"/license*
+          
+          # Clean up
+          rm -rf "$TEMP_DIR"
+          
+          echo "Done! Boilerplate code created at $TARGET_PATH"
+      workdir: /repo
+      mounts:
+        - path: /repo
+          source:
+            type: host
+            path: ''
+      env:
+        - name: TARGET_PATH
+          value: pt.param target-path
+        - name: SOURCE_PATH
+          value: pt.param source-path
+
+  - id: add-package-python
+    info: Adds uv packages in a Python module
+    module: polytope/container
+    params:
+      - id: packages
+        info: Comma-separated list of packages to add
+        type: str
+      - id: module-code-path
+        info: Relative path of the module code's root directory
+        type: str
+    args:
+      image: python:3.13-slim
+      cmd:
+        - sh
+        - -c
+        - |
+          set -eu
+          echo "Installing uv..."
+          pip install uv
+          echo "Adding python packages: $PACKAGES"
+          cd "/module-code"
+          if [ ! -f "pyproject.toml" ]; then
+            echo "ERROR: No pyproject.toml found"
+            exit 1
+          fi
+          # Add packages to pyproject.toml
+          uv add $PACKAGES
+          echo "Done!"
+      mounts:
+        - path: /module-code
+          source:
+            type: host
+            path: pt.param module-code-path
+      env:
+        - name: PACKAGES
+          value: pt.param packages
+
+  - id: api
+    info: "Python API server (blueprint: python-api)"
+    module: polytope/python
+    args:
+      image: python:3.13-slim
+      code: { type: host, path: ./modules/api }
+      cmd: bin/run
+      services:
+        - id: api
+          ports:
+            - port: 4000
+              protocol: http
+              expose-as: pt.value api-port
+      env:
+        - { name: PORT, value: pt.value api-port }
+
   - id: web-app
-    info: "React web application (blueprint: react-web-app)"
+    info: "React Web App (blueprint: react-web-app)"
     params:
       - id: cmd
         type: [default, str, ./bin/run]
@@ -32,63 +154,49 @@ modules:
         - id: web-app
           ports: [{protocol: http, port: pt.value web-app-port, expose-as: pt.value web-app-port}]
       mounts:
-        - { path: /root/.cache/, source: { type: volume, scope: project, id: dependency-cache }}
-        - { path: /root/.bun/, source: { type: volume, scope: project, id: bun-cache }}
-        - { path: /app/node_modules/, source: { type: volume, scope: project, id: node-modules }}
+        - { path: /root/.cache/, source: { type: volume, id: dependency-cache }}
+        - { path: /root/.bun/, source: { type: volume, id: bun-cache }}
+        - { path: /app/node_modules/, source: { type: volume, id: node-modules }}
 
-  - id: api
-    info: "Python API server (blueprint: python-api)"
-    module: polytope/python
+  - id: spa
+    info: "React Web App (blueprint: react-web-app)"
+    params:
+      - id: cmd
+        type: [default, str, ./bin/run]
+    module: polytope/node
     args:
-      image: python:3.13-slim
-      code: { type: host, path: ./modules/api }
-      cmd: bin/run
-      services:
-        - id: api
-          ports:
-            - port: 4000
-              protocol: http
-              expose-as: pt.value api-port
+      id: web-app
+      image: oven/bun:slim
+      code: { type: host, path: ./modules/spa }
+      cmd: pt.param cmd
       env:
-        - { name: PORT, value: pt.value api-port }
-        - { name: DATABASE_HOST, value: pt.value postgres-host }
-        - { name: DATABASE_PORT, value: pt.value postgres-port }
-        - { name: DATABASE_NAME, value: pt.value postgres-database }
-        - { name: DATABASE_USER, value: pt.secret postgres-username }
-        - { name: DATABASE_PASSWORD, value: pt.secret postgres-password }
-        - { name: COUCHBASE_HOST, value: pt.value couchbase-host }
-        - { name: COUCHBASE_USERNAME, value: pt.secret couchbase-username }
-        - { name: COUCHBASE_PASSWORD, value: pt.secret couchbase-password }
-        - { name: REDPANDA_HOST, value: pt.value redpanda-host }
-        - { name: REDPANDA_PORT, value: pt.value redpanda-port }
-
-  - id: kong
-    info: "Kong API Gateway (blueprint: kong-api-gateway)"
-    module: polytope/kong!simple
-    args:
-      image: gcr.io/arched-inkwell-420116/kong-oauth-proxy:latest
-      config-file: { type: host, path: ./modules/kong/kong.yml }
-      autoreload: true
-      env:
-        - { name: KONG_ADMIN_LISTEN, value: "0.0.0.0:8001" }
-        - { name: KONG_PROXY_LISTEN, value: "0.0.0.0:8000" }
+        - { name: PORT, value: pt.value web-app-port }
+        - { name: API_HOST, value: pt.value api-host }
+      restart:
+        policy: always
       services:
-        - { id: kong, ports: [{ port: 8000, protocol: http, expose-as: pt.value kong-port }] }
-        - { id: kong-admin, ports: [{ port: 8001, protocol: http, expose-as: pt.value kong-admin-port }] }
+        - id: web-app
+          ports: [{protocol: http, port: pt.value web-app-port, expose-as: pt.value web-app-port}]
+      mounts:
+        - { path: /root/.cache/, source: { type: volume, id: dependency-cache }}
+        - { path: /root/.bun/, source: { type: volume, id: bun-cache }}
+        - { path: /app/node_modules/, source: { type: volume, id: node-modules }}
 
   - id: curity
-    info: "Curity Identity Server (blueprint: curity-identity-provider)"
+    info: "Runs the Curity Identity Server (blueprint: curity-identity-provider)"
     module: polytope/curity
     args:
       image: curity.azurecr.io/curity/idsvr:10.4.0
       config-file: { type: host, path: ./modules/curity/config.xml }
       restart: { policy: always }
       password: password
+      log-level: DEBUG  # NOTE: uncomment when developing against curity
       env:
+      
         - { name: ADMIN, value: true }
         - { name: CURITY_BASE_URL, value: pt.value curity-base-url }
         - { name: WEB_APP_URL, value: pt.value web-app-url }
-        - { name: CURITY_AGENT_BASE_URL, value: pt.value curity-agent-base-url}
+        - { name: AGENT_BASE_URL, value: pt.value curity-agent-base-url }
       mounts:
         - { path: /opt/idsvr/usr/bin/post-commit-cli-scripts, source: { type: host, path: ./modules/curity/post-commit-cli-scripts }}
         - { path: /opt/idsvr/etc/init/curity-users.xml, source: { type: host, path: ./modules/curity/users.xml }}
@@ -100,43 +208,29 @@ modules:
       image: postgres:16.2
       data-volume: { id: postgres-data, type: volume, scope: project }
       env:
-        - { name: POSTGRES_HOST_AUTH_METHOD, value: trust }
         - { name: POSTGRES_DB, value: pt.value postgres-database }
         - { name: POSTGRES_USER, value: pt.secret postgres-username }
         - { name: POSTGRES_PASSWORD, value: pt.secret postgres-password }
+        - { name: POSTGRES_HOST_AUTH_METHOD, value: scram-sha-256 }
       restart: { policy: on-failure }
       service-id: postgres
+      scripts:
+        - { type: host, path: ./modules/curity/db.sql }
 
-  - id: couchbase
-    info: "Couchbase cluster (blueprint: couchbase)"
-    module: polytope/couchbase
+  - id: kong
+    info: "Runs the Kong API Gateway (blueprint: kong-api-gateway)"
+    module: polytope/kong!simple
     args:
-      image: couchbase:enterprise-7.6.6
-      data-volume: { id: couchbase-data, type: volume, scope: project }
-
-  - id: redpanda
-    info: "Redpanda server (blueprint: redpanda)"
-    module: polytope/redpanda
-    args:
-      image: docker.redpanda.com/redpandadata/redpanda:latest
-      data-volume: { id: redpanda-data, type: volume, scope: project }
-
-  - id: config-manager
-    info: "Manages Redpanda topics and Couchbase buckets/scopes/collections (blueprint: config-manager)"
-    module: polytope/container
-    args:
-      image: gcr.io/arched-inkwell-420116/config-manager:latest
-      id: config-manager
-      restart: { policy: on-failure, max-restarts: 3 }
+      image: gcr.io/arched-inkwell-420116/kong-oauth-proxy
+      config-file: { type: host, path: ./modules/kong/kong.yml }
+      autoreload: true
       env:
-        - { name: ENVIRONMENT, value: pt.value environment }
-        - { name: SERVICES, value: pt.value config-manager-services }
-        - { name: COUCHBASE_HOST, value: pt.value couchbase-host }
-        - { name: COUCHBASE_TLS, value: pt.value couchbase-tls }
-        - { name: COUCHBASE_USERNAME, value: pt.secret couchbase-username }
-        - { name: COUCHBASE_PASSWORD, value: pt.secret couchbase-password }
-        - { name: REDPANDA_HOST, value: pt.value redpanda-host }
-        - { name: REDPANDA_PORT, value: pt.value redpanda-port }
-      mounts:
-        - { path: /config-manager/conf, source: { type: host, path: ./modules/config-manager } }
-        - { path: /root/.cache/, source: { type: volume, scope: project, id: dependency-cache } }
+        - { name: KONG_ADMIN_LISTEN, value: "0.0.0.0:8001" }
+        - { name: KONG_PROXY_LISTEN, value: "0.0.0.0:8000" }
+        - { name: KONG_NGINX_HTTP_LUA_SHARED_DICT, value: 'phantom-token 10m' }
+        - { name: KONG_PLUGINS, value: 'bundled,oauth-proxy,phantom-token' }
+      services:
+        - { id: kong, ports: [{ port: 8000, protocol: http, expose-as: pt.value kong-port }] }
+        - { id: kong-admin, ports: [{ port: 8001, protocol: http, expose-as: pt.value kong-admin-port }] }
+      plugins:
+        - { name: phantom-token, package: kong-phantom-token, version: 2.0.0 }
